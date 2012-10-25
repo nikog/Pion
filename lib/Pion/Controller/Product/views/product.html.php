@@ -1,0 +1,1 @@
+<p>Product <?=$this->data['product']['id']?>: <?=$this->data['product']['name']?><p>
