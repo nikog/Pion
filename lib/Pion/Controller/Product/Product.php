@@ -14,15 +14,15 @@ class Product extends \Pion\Pion {
 		$searchParams = $_GET['search'];
 		$this->getProducts($searchParams);
 
-		$this->data['title'] = 'Product list';
-		$this->data['content'] = $this->loadView('productList');
+		$this->set('title', 'Product list');
+		$this->set('content', $this->loadView('productList'));
 	}
 
 	function _show() {
-		$this->data['product'] = $this->getProduct($this->args['id']);
+		$this->set('product', $this->getProduct($this->args['id']));
 
-		$this->data['title'] = 'The Product';
-		$this->data['content'] = $this->loadView('product');
+		$this->set('title', 'The Product');
+		$this->set('content', $this->loadView('product'));
 
 		return $this;
 	}

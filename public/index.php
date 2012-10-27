@@ -1,22 +1,26 @@
 <?php
+
+use Pion\Pion;
+
 require_once __DIR__ . '/../bootstrap.php';
 
-class Application extends \Pion\Pion {
-	function _argdemo() {
-		echo '<pre>';
-		print_r($this->args);
-		echo '</pre>';
-	}
-}
+$app = new Pion();
 
 $getUris = array(
 	// Matches "demo/one(/two)(/3)"
-	"/demo/(?P<first>\w+)(?:/(?P<second>\w+))?(?:/(?P<third>\d+))?" => '_argdemo',
+	"/demo/(?P<first>\w+)(?:/(?P<second>\w+))?(?:/(?P<third>\d+))?" => function() use ($app) {
+		echo '<pre>';
+		print_r($this->args);
+		echo '</pre>';
+	},
 	"/product(?:/page/(?P<page>\d+))?" => "Product",
 	"/product(?:/(?P<id>\d+))?" => "Product",
 	"/home" => 'Home',
-	"/test" => function() {
-		phpinfo();
+	"/test" => function() use ($app) {
+		echo $app->loadView('template', 'html', 'templates');
+	},
+	"/json" => function() use ($app) {
+		echo json_encode($this->request);
 	},
 	);
 
@@ -35,7 +39,6 @@ $uris = array(
 	'delete' => null
 	);
 
-$app = new Application();
 $app->setDefaultTemplate('index')
 	->set404Action('Error404')
 	->run($uris, $filters);

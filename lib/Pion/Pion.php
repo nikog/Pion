@@ -18,19 +18,21 @@ class Pion {
 	protected $args;
 
 	/**
-	*	@var array Data usable by views and templates
+	*	@var array Data usable by views and templates through get($key)
 	*/
-	protected $data;
+	private $viewData;
 
 	/**
-	*	@var string HTTP method used by the request
+	*	@var array Contains request data such as uri, method, headers.
 	*/
-	private $requestMethod;
+	protected $request;
 
 	/**
 	*	@var boolean Tells if response has already been sent manually
 	*/
 	protected static $responseSent;
+
+
 
 	public function __construct($baseUri = '/') {
 		// Try to quess base URI
@@ -38,7 +40,7 @@ class Pion {
 			$_SERVER['DOCUMENT_ROOT'], '', dirname($_SERVER['SCRIPT_FILENAME']));
 
 		$this->args = array();
-		$this->data = array();
+		$this->viewData = array();
 
 		if(!in_array('mod_rewrite', apache_get_modules()))
 			$this->baseUri .= 'index.php';
@@ -55,16 +57,16 @@ class Pion {
 	*	URIs assigned to those methods as values.
 	*/
 	public function run($uris = null, $filter) {
-		$this->requestMethod = strtolower($_SERVER['REQUEST_METHOD']);
+		$this->request['method'] = strtolower($_SERVER['REQUEST_METHOD']);
 
 		if(is_null($uris)) {
 			throw new ApplicationException('No URIs has been defined.');
-		} else if(!isset($uris[$this->requestMethod])) {
-			throw new ApplicationException("No URIs assigned to HTTP method {$this->requestMethod}.");
+		} else if(!isset($uris[$this->request['method']])) {
+			throw new ApplicationException("No URIs assigned to HTTP method {$this->request['method']}.");
 		}
 
 		// Discard uris assigned to other methods for now
-		$uris = $uris[$this->requestMethod];
+		$uris = $uris[$this->request['method']];
 		/*
 		* Attempt to route. After successful routing, send response
 		* if no response has been sent yet.
@@ -74,7 +76,7 @@ class Pion {
 			$this->handle404();
 		}
 		if(!$this->isResponseSent()) {
-			if($this->ctrl) $this->data = $this->ctrl->data;
+			if($this->ctrl) $this->viewData = $this->ctrl->viewData;
 			$this->respond($this->defaultTemplate);
 		}
 	}
@@ -84,12 +86,12 @@ class Pion {
 	*	@return boolean True on URI match. False if no match.
 	*/
 	private function route($uris) {
-		$requestUri = strtok($_SERVER['REQUEST_URI'], '?');
+		$this->request['uri'] = strtok($_SERVER['REQUEST_URI'], '?');
 
 		foreach($uris as $pattern => $action) {
 			$pattern = $this->baseUri . $pattern;
 
-			if(preg_match("@^".$pattern."/?$@", $requestUri, $matches)) {
+			if(preg_match("@^".$pattern."/?$@", $this->request['uri'], $matches)) {
 				$this->setArgs($matches);
 
 				if(!$this->executeAction($action)) {
@@ -132,8 +134,8 @@ class Pion {
 			$controller->setArgs($this->args);
 
 			// Attempt to quess method according to rails CRUD methods
-			$crudMethod = $this->getCrudMethod($this->requestMethod);
-			$httpMethod = "_{$this->requestMethod}";
+			$crudMethod = $this->getCrudMethod($this->request['method']);
+			$httpMethod = "_{$this->request['method']}";
 
 			if($controllerMethod) {
 				$out = $controller->$controllerMethod();
@@ -182,11 +184,12 @@ class Pion {
 	*/
 	protected function respond($template = null) {
 		if(!static::$responseSent) {
-			$data = (object) $this->data;
+			$data = (object) $this->viewData;
 
 			ob_start();
 			if($template) {
-				include __DIR__."/templates/{$template}.php";
+				echo $this->loadView($template, 'php', 'templates');
+				//include __DIR__."/templates/{$template}.php";
 			} else {
 				echo $data->content;
 			}
@@ -278,31 +281,56 @@ class Pion {
 	*	@param string $ext Optional forced content type. Otherwise "Accept"-header will be used
 	*	@return string
 	*/
-	protected function loadView($view, $ext = null) {
-		$found = false;
+	public function loadView($view, $type = null, $tplDir = 'views') {
+		$callers = debug_backtrace();
+
+		$class = (isset($callers[1]['class'])) ? $callers[1]['class'] : get_class($this);
 
 		// Get directory of this class or the class that extends this class
-		$reflector = new \ReflectionClass(get_class($this));
-		$dir = dirname($reflector->getFileName());
+		$reflector = new \ReflectionClass($class);
+		$classDir = dirname($reflector->getFileName());
 
-		$path = "{$dir}/views/{$view}";
+		$path = "{$classDir}/{$tplDir}/{$view}";
 
-		if($ext === null) {
+		if($type === null) {
+			// Get filetype from Accept header
 			$this->setContentTypes();
 
-			foreach($this->request['accept'] as $type => $ext) {
-				if(is_file("{$path}.{$ext}.php")) {
-					$found = true;
+			foreach ($this->request['accept'] as $header => $type) {
+				if (is_file("{$path}.{$type}.php")) {
+					$includePath = "{$path}.{$type}.php";
+					break;
+				} else if (is_file("{$path}.{$type}")) {
+					$includePath = "{$path}.{$type}";
 					break;
 				}
 			}
+		} else {
+			if(is_file("{$path}.{$type}.php")) {
+				$includePath = "{$path}.{$type}.php";
+			} else {
+				$includePath = "{$path}.{$type}";
+			}
 		}
 
-		ob_start();
-		if($found && is_file("{$path}.{$ext}.php")) {
-			include "{$path}.{$ext}.php";
+		
+		if(isset($includePath)) {
+			$data = (object) $this->viewData;
+
+			ob_start();
+
+			include $includePath;
+
+			return ob_get_clean();
 		}
-		return ob_get_clean();
+		throw new ApplicationException("File '{$path}.{$type}' was not found");
+	}
+
+	protected function set($key, $data) {
+		$this->viewData[$key] = $data;
+	}
+	protected function get($key, $default = null) {
+		return isset($this->viewData[$key]) ? $this->viewData[$key] : $default;
 	}
 
 	/**
@@ -310,6 +338,7 @@ class Pion {
 	* 	from Accept header values.
 	*/
 	protected function setContentTypes() {
+		// Some temporary examples
 		$content_types = array(
 			'text/html' => 'html',
 			'application/json' => 'js',
