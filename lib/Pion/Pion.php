@@ -32,6 +32,8 @@ class Pion {
 	*/
 	protected static $responseSent;
 
+	private $controllerDir;
+
 
 
 	public function __construct($baseUri = '/') {
@@ -41,6 +43,8 @@ class Pion {
 
 		$this->args = array();
 		$this->viewData = array();
+
+		$this->controllerDir = 'Controller';
 
 		if(!in_array('mod_rewrite', apache_get_modules()))
 			$this->baseUri .= 'index.php';
@@ -104,31 +108,39 @@ class Pion {
 		}
 		return false;
 	}
+
 	/**
 	*	Attempts to execute the supplied action.
-	*	Action can be either closure, class method or class.
-	*	@param mixed $action Closure, class method or class name
+	*	Action can be either closure or a class. 
+	*
+	*	BindTo()-method will be called on closures if available.
+	*
+	*	Class should reside in either default controller directory 'Controller'
+	*	or the provided controllerDir. PSR-0 should be used on class path and namespace.
+	*
+	*	@param mixed $action Closure or name of controller class
+	*	@param string $controllerMethod Call this method instead of guessing it by 
+	*		method and uri arguments.
+	*	@param string $controllerDir Directory of the controller
 	*	@return mixed If executed action returns something, return that.
 	*		If the action could be executed but did not return anything,
 	*		return true. False will be returned if no action is found.
 	*/
-	protected function executeAction($action, $controllerMethod = null) {
+	protected function executeAction($action, $controllerMethod = null, $controllerDir = null) {
 		// Action is a closure
 		if(is_callable($action)) {
+			if(method_exists($action, 'bindTo'))
+				$action->bindTo($this);
+
 			$out = call_user_func_array($action, $this->args);
 			return $out === null ? true : $out;
 		}
 
-		// Action is a method in defined in class application
-		if(method_exists($this, $action)) {
-			$this->args['accept'] = 'html';
-			$out = $this->{$action}();
-			return $out === null ? true : $out;
-		}
-
 		// Action is a defined controller
-		if(is_file(__DIR__ . "/Controller/{$action}/{$action}.php")) {
-			$class = "\\Pion\\Controller\\{$action}\\{$action}";
+		if($controllerDir === null)
+			$controllerDir = $this->controllerDir;
+		if(class_exists("\\Pion\\{$controllerDir}\\{$action}\\{$action}", true)) {
+			$class = "\\Pion\\{$controllerDir}\\{$action}\\{$action}";
 
 			$controller = new $class($this->baseUri);
 			$controller->setArgs($this->args);
@@ -264,6 +276,10 @@ class Pion {
 	*/
 	public function setDefaultTemplate($tpl) {
 		$this->defaultTemplate = $tpl;
+		return $this;
+	}
+	public function setDefaultControllerDir($dir) {
+		$this->controllerDir = $dir;
 		return $this;
 	}
 	/**
