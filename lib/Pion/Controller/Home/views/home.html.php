@@ -1,3 +1,3 @@
-<h4>Sample product:</h4>
-<?=$data->product->get('content')?>
+<h4>The latest news</h4>
+<?=$data->newsObj['content']?>
 <button id="button">Click me!</button>
