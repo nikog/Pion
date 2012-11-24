@@ -3,41 +3,15 @@ namespace Pion;
 
 class Pion
 {
-	/**
-	*	@var string Base path of URI
-	*/
 	protected $baseUri;
-
-	/**
-	*	@var string Default template used
-	*/
 	protected $defaultTemplate;
-
-	/**
-	*	@var array Parsed arguments from URI
-	*/
 	protected $args;
-
-	/**
-	*	@var array Data usable by views and templates through get($key)
-	*/
-	private $viewData;
-
-	/**
-	*	@var array Contains request data such as uri, method, headers.
-	*/
 	protected $request;
-
-	/**
-	*	@var boolean Tells if response has already been sent manually
-	*/
 	protected static $responseSent;
-
 	private $controllerDir;
+	private $tplDefaults;
 
-
-
-	public function __construct($baseUri = '/')
+	public function __construct($baseUri = '/', $args = array())
 	{
 		// Try to quess base URI
 		$this->baseUri = str_replace(
@@ -46,10 +20,15 @@ class Pion
 			dirname($_SERVER['SCRIPT_FILENAME'])
 		);
 
-		$this->args = array();
-		$this->viewData = array();
+		$this->args = $args;
 
 		$this->controllerDir = 'Controller';
+
+		$this->tplDefaults = array(
+			'name' => $this->defaultTemplate,
+			'ext' => 'php',
+			'dir' => 'templates'
+		);
 
 		if (!in_array('mod_rewrite', apache_get_modules())) {
 			$this->baseUri .= 'index.php';
@@ -58,7 +37,7 @@ class Pion
 
 	/**
 	*	Application main logic
-	*	Will parse supplied URIs and call the action of 
+	*	Will parse supplied URIs and call the action of
 	*	the matched URI. If no match is found, action assigned
 	*	to 404 through set404Action will be executed.
 	*
@@ -66,139 +45,160 @@ class Pion
 	*	all four HTTP methods as keys with arrays containing
 	*	URIs assigned to those methods as values.
 	*/
-	public function run($uris = null, $filter)
+	public function run($uris = null)
 	{
+		if (is_null($uris)) {
+			throw new \InvalidArgumentException('No URIs has been defined.');
+		}
+
+		if(!is_array($uris)) {
+			throw new \InvalidArgumentException('Given URIs must be an array.');
+		}
+
 		$this->request['method'] = strtolower($_SERVER['REQUEST_METHOD']);
 
-		if (is_null($uris)) {
-			throw new ApplicationException('No URIs has been defined.');
-		} elseif (!isset($uris[$this->request['method']])) {
-			throw new ApplicationException(
+		if (!isset($uris[$this->request['method']])) {
+			throw new \InvalidArgumentException(
 				"No URIs assigned to HTTP method {$this->request['method']}.");
 		}
 
-		// Discard uris assigned to other methods for now
-		$uris = $uris[$this->request['method']];
-		/*
-		* Attempt to route. After successful routing, send response
-		* if no response has been sent yet.
-		* Handle 404 error accordingly if no matching URI is found.
-		*/
-		if (!$this->route($uris)) {
-			$this->handle404();
+		if(is_array($uris[key($uris)])) {
+			$uris = $uris[$this->request['method']];
 		}
 
-		if (!$this->isResponseSent()) {
-			if($this->ctrl) $this->viewData = $this->ctrl->viewData;
-			$this->respond($this->defaultTemplate);
+		$controllerData = $this->route($uris);
+
+		// Template defaults
+		$templateData = $this->tplDefaults;
+		if($controllerData && array_key_exists('template', $controllerData)) {
+			// Merge and overwrite custom values to defaults
+			$templateData = array_merge(
+				$templateData,
+				$controllerData['template']
+			);
 		}
+
+		if(!$templateData['name']) {
+			$controllerData = $controllerData['content'];
+		}
+
+		// Route was not found; handle 404
+		if ($controllerData === false) {
+			try {
+				$controllerData = $this->execute($uris['404']);
+			} catch (InvalidActionException $e) {
+				// No action for 404 was found, use default 404 handling
+				header("HTTP/1.1 404 Not Found");
+				// Clear templateData
+				$templateData = array_map(function() {}, $templateData);
+			}
+		}
+
+		// Output
+		$this->respond(
+			$controllerData,
+			$templateData['name'],
+			$templateData['ext'],
+			$templateData['dir']
+		);
 	}
 
 	/**
-	*	@param array $uris Contains the defined uris for 
+	*	@param array $uris Contains the defined uris for
 	*	currently used http method
-	*	@return boolean True on URI match. False if no match.
+	*	@return mixed Returns whatever the action returns. Without match
+	*	returns false.
 	*/
-	private function route($uris) {
+	private function route($uris)
+	{
 		$this->request['uri'] = strtok($_SERVER['REQUEST_URI'], '?');
 
 		foreach ($uris as $pattern => $action) {
-			$pattern = $this->baseUri . $pattern;
+			$pattern = "@^" . $this->baseUri . $pattern . "/?$@";
 
-			if (preg_match(
-				"@^".$pattern."/?$@",
-				$this->request['uri'],
-				$matches
-			)) {
+			if (preg_match($pattern, $this->request['uri'], $matches)) {
 				$this->setArgs($matches);
-
-				if (!$this->executeAction($action)) {
-					throw new ApplicationException("Assigned action ".
-						"'{$action}' for URI '{$pattern} was not found to be ".
-						"a defined closure, class or class method.");
-				}
-				return true;
+				return $this->execute($action);
 			}
 		}
 		return false;
 	}
 
+
+
 	/**
 	*	Attempts to execute the supplied action.
-	*	Action can be either closure or a class. 
+	*	Action can be either closure or a class.
 	*
 	*	BindTo()-method will be called on closures if available.
 	*
 	*	Class should reside in either default controller directory 'Controller'
-	*	or the provided controllerDir. PSR-0 should be used on class path and namespace.
+	*	or the provided controllerDir.
+	*
+	*	PSR-0 should be used on class path and namespace.
 	*
 	*	@param mixed $action Closure or name of controller class
-	*	@param string $controllerMethod Call this method instead of guessing it by 
-	*		method and uri arguments.
+	*	@param string $controllerMethod Call this method instead of
+	*		guessing it by method and uri arguments.
 	*	@param string $controllerDir Directory of the controller
-	*	@return mixed If executed action returns something, return that.
-	*		If the action could be executed but did not return anything,
-	*		return true. False will be returned if no action is found.
+	*	@return mixed Returns the return value of the action.
 	*/
-	protected function executeAction(
+	protected function execute(
 		$action,
 		$controllerMethod = null,
 		$controllerDir = null
 	) {
 		// Action is a closure
 		if (is_callable($action)) {
-			if (method_exists($action, 'bindTo'))
+			if (method_exists($action, 'bindTo')) {
 				$action->bindTo($this);
+			}
 
-			$out = call_user_func_array($action, $this->args);
-			return $out === null ? true : $out;
+			return call_user_func_array($action, $this->args);
 		}
+
+		// Search from default controller directory if not defined
+		$controllerDir = isset($controllerDir) ?
+			$controllerDir : $this->controllerDir;
+
+
+		$class = "\\Pion\\{$controllerDir}\\{$action}\\{$action}";
 
 		// Action is a defined controller
-		if ($controllerDir === null) {
-			$controllerDir = $this->controllerDir;
-		}
-		if (class_exists(
-			"\\Pion\\{$controllerDir}\\{$action}\\{$action}",
-			true
-		)) {
-			$class = "\\Pion\\{$controllerDir}\\{$action}\\{$action}";
-
-			$controller = new $class($this->baseUri);
-			$controller->setArgs($this->args);
+		if (class_exists($class, true)) {
+			$controller = new $class($this->baseUri, $this->args);
 
 			// Attempt to quess method according to rails CRUD methods
 			$crudMethod = $this->getCrudMethod($this->request['method']);
 			$httpMethod = "_{$this->request['method']}";
 
 			if ($controllerMethod) {
-				$out = $controller->$controllerMethod();
+				if(method_exists($controller, $controllerMethod)) {
+					$controllerData = $controller->$controllerMethod();
+				} else {
+					throw new \BadMethodCallException(
+						"Class '{$class}' does not support ".
+						"method {$controllerMethod}."
+					);
+				}
 			} elseif (method_exists($controller, $crudMethod)) {
-				$out = $controller->$crudMethod();
+				$controllerData = $controller->$crudMethod();
 			} elseif (method_exists($controller, $httpMethod)) {
-				$out = $controller->$httpMethod();
+				$controllerData = $controller->$httpMethod();
 			} else {
-				throw new ApplicationException(
-					"Class {$action} doesn't support ".
-					"methods {$crudMethod} or {$httpMethod}.");
+				throw new \BadMethodCallException(
+					"Class '{$class}' does not support ".
+					"methods {$crudMethod} or {$httpMethod}."
+				);
 			}
-			$this->ctrl = $controller;
-			return $out === null ? $controller->viewData : $out;
+
+			return $controllerData;
 		}
-		return false;
+		throw new InvalidActionException("Executed action '{$action}' ".
+			"is not a defined closure or controller.");
 	}
 
-	/**
-	*	Execute action defined through set404Action()
-	*	Otherwise response body will be empty
-	*/
-	protected function handle404()
-	{
-		header("HTTP/1.1 404 Not Found");
-		if (isset($this->_404)) {
-			$this->executeAction($this->_404);
-		}
-	}
+
 
 	/**
 	*	Check if any kind of response has been sent
@@ -213,28 +213,36 @@ class Pion
 		return false;
 	}
 
+
+
 	/**
 	*	Send response to client
 	*	@param string $template Name of the template file
 	*/
-	protected function respond($template = null)
-	{
-		if (!static::$responseSent) {
-			$data = (object) $this->viewData;
-
+	public function respond(
+		$controllerData,
+		$template = null,
+		$extension = null,
+		$dirName = null
+	) {
+		if (!$this->isResponseSent()) {
 			ob_start();
 			if ($template) {
-				echo $this->loadView($template, 'php', 'templates');
-				//include __DIR__."/templates/{$template}.php";
+				echo $this->render(
+					$template,
+					$controllerData,
+					$extension,
+					$dirName
+				);
 			} else {
-				echo $data->content;
+				echo $controllerData;
 			}
 			ob_end_flush();
 
 			static::$responseSent = true;
-		} else {
-			throw new ApplicationException("Response has already been sent.");
 		}
+
+		//throw new ApplicationException("Response has already been sent.");
 	}
 
 	protected function redirect($path)
@@ -301,12 +309,9 @@ class Pion
 		return $this;
 	}
 
-	/**
-	*
-	*/
-	public function setDefaultTemplate($tpl)
+	public function setTemplateDefaults($defaults)
 	{
-		$this->defaultTemplate = $tpl;
+		$this->tplDefaults = array_merge($this->tplDefaults, $defaults);
 		return $this;
 	}
 
@@ -315,60 +320,47 @@ class Pion
 		$this->controllerDir = $dir;
 		return $this;
 	}
-	/**
-	*	Assign action to execute when no URI is matched
-	*	@param mixed $action Closure, class name or class method
-	*/
-	public function set404Action($action)
-	{
-		$this->_404 = $action;
-		return $this;
-	}
 
 	/**
 	*	Fetch view from {current_file_location}/views/{view}.{content_type}.php
 	*	@param string $view Name of the view file
-	*	@param string $ext Optional forced content type. 
+	*	@param string $ext Optional forced content type.
 	*	Otherwise "Accept"-header will be used
 	*	@return string
 	*/
-	public function loadView($view, $type = null, $tplDir = 'views')
+	public function render($view, $data = array(), $ext = null, $dir = 'views')
 	{
-		$callers = debug_backtrace();
-
-		$class = (isset($callers[1]['class'])) ?
-			$callers[1]['class'] : get_class($this);
-
-		// Get directory of this class or the class that extends this class
-		$reflector = new \ReflectionClass($class);
+		// Get directory of the class that called this method
+		$reflector = new \ReflectionClass(get_class($this));
 		$classDir = dirname($reflector->getFileName());
 
-		$path = "{$classDir}/{$tplDir}/{$view}";
+		$classPath = "{$classDir}/{$dir}/{$view}";
 
-		if ($type === null) {
+		if ($ext === null) {
 			// Get filetype from Accept header
 			$this->setContentTypes();
 
-			foreach ($this->request['accept'] as $header => $type) {
-				if (is_file("{$path}.{$type}.php")) {
-					$includePath = "{$path}.{$type}.php";
+			foreach ($this->request['accept'] as $header => $ext) {
+				if (is_file("{$classPath}.{$ext}.php")) {
+					$includePath = "{$classPath}.{$ext}.php";
 					break;
-				} elseif (is_file("{$path}.{$type}")) {
-					$includePath = "{$path}.{$type}";
+				} elseif (is_file("{$classPath}.{$ext}")) {
+					$includePath = "{$classPath}.{$ext}";
 					break;
 				}
 			}
 		} else {
-			if (is_file("{$path}.{$type}.php")) {
-				$includePath = "{$path}.{$type}.php";
+			if (is_file("{$classPath}.{$ext}.php")) {
+				$includePath = "{$classPath}.{$ext}.php";
 			} else {
-				$includePath = "{$path}.{$type}";
+				$includePath = "{$classPath}.{$ext}";
 			}
 		}
 
-		
+
 		if (isset($includePath)) {
-			$data = (object) $this->viewData;
+			// Personal preference
+			$data = (object) $data;
 
 			ob_start();
 
@@ -376,17 +368,7 @@ class Pion
 
 			return ob_get_clean();
 		}
-		throw new ApplicationException("File '{$path}.{$type}' was not found");
-	}
-
-	protected function set($key, $data)
-	{
-		$this->viewData[$key] = $data;
-	}
-
-	protected function get($key, $default = null)
-	{
-		return isset($this->viewData[$key]) ? $this->viewData[$key] : $default;
+		throw new FileNotFoundException("File '{$path}.{$ext}' was not found");
 	}
 
 	/**
@@ -399,7 +381,7 @@ class Pion
 		$content_types = array(
 			'text/html' => 'html',
 			'application/json' => 'js',
-			'application/xml' => 'xml',			
+			'application/xml' => 'xml',
 		);
 
 		$accept = $_SERVER['HTTP_ACCEPT'];
@@ -419,10 +401,6 @@ class Pion
 			}
 		}
 	}
-
-	protected function asset($asset)
-	{
-		return "{$this->baseUri}/assets/{$asset}";
-	}
 }
-class ApplicationException extends \Exception { }
+class FileNotFoundException extends \LogicException {}
+class InvalidActionException extends \LogicException {}

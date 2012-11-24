@@ -12,8 +12,8 @@
 <html>
 <head>
 	<title><?php echo $data->title; ?></title>
-	<link rel="stylesheet" type="text/css" href="<?=$this->asset('bootstrap/css/bootstrap.min.css')?>"/>
-	<link rel="stylesheet" type="text/css" href="<?=$this->asset('style.css')?>"/>
+	<link rel="stylesheet" type="text/css" href="assets/bootstrap/css/bootstrap.min.css"/>
+	<link rel="stylesheet" type="text/css" href="assets/style.css"/>
 </head>
 
 <body>
@@ -24,11 +24,10 @@
 
 		<article>
 			<?php echo $data->content; ?>
-			
 		</article>
 	</div>
 
-	<script type="text/javascript" src="<?=$this->asset('jquery.min.js')?>"></script>
-	<script type="text/javascript" src="<?=$this->asset('script.js')?>"></script>
+	<script type="text/javascript" src="assets/jquery.min.js"></script>
+	<script type="text/javascript" src="assets/script.js"></script>
 </body>
 </html>

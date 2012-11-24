@@ -14,17 +14,19 @@ class Product extends \Pion\Pion {
 		$searchParams = $_GET['search'];
 		$this->getProducts($searchParams);
 
-		$this->set('title', 'Product list');
-		$this->set('content', $this->loadView('productList'));
+		$title = 'Product list';
+		$content = $this->render('productList');
+
+		return array($title, $content);
 	}
 
 	function _show() {
-		$this->set('product', $this->getProduct($this->args['id']));
+		$product = $this->getProduct($this->args['id']);
 
-		$this->set('title', 'The Product');
-		$this->set('content', $this->loadView('product'));
+		$title = 'The Product';
+		$content = $this->render('product');
 
-		return $this;
+		return array($title, $content);
 	}
 
 	function getProducts($searchParams) {

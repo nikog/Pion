@@ -8,7 +8,8 @@ $app = new Pion();
 
 $getUris = array(
 	// Matches "demo/one(/two)(/3)"
-	"/demo/(?P<first>\w+)(?:/(?P<second>\w+))?(?:/(?P<third>\d+))?" => function() use ($app) {
+	"/demo/(?P<first>\w+)(?:/(?P<second>\w+))?(?:/(?P<third>\d+))?" =>
+	function() use ($app) {
 		echo '<pre>';
 		print_r($this->args);
 		echo '</pre>';
@@ -17,11 +18,19 @@ $getUris = array(
 	"/product(?:/(?P<id>\d+))?" => "Product",
 	"/home" => 'Home',
 	"/test" => function() use ($app) {
-		echo $app->loadView('template', 'html', 'templates');
+		echo $app->render('template', null, 'html', 'templates');
 	},
 	"/json" => function() use ($app) {
-		echo json_encode($this->request);
+		$json = json_encode(array('hello' => 'world'));
+
+		return array(
+			// Set template to none
+			'template' => array('name' => null),
+			'content' => $json);
+
+		//$app->respond(json_encode(array('hello' => 'world')));
 	},
+	"/errortest" => 'doesntexist',
 	);
 
 $postUris = array(
@@ -39,6 +48,5 @@ $uris = array(
 	'delete' => null
 	);
 
-$app->setDefaultTemplate('index')
-	->set404Action('Error404')
+$app->setTemplateDefaults(array('name' => 'index'))
 	->run($uris, $filters);

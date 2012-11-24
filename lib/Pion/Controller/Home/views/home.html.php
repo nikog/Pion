@@ -1,3 +1,3 @@
 <h4>The latest news</h4>
-<?=$data->newsObj['content']?>
+<?=$data->news?>
 <button id="button">Click me!</button>
