@@ -1,7 +1,9 @@
 {
     "autoload": {
         "psr-0": {
-            "Pion": "lib/"
+            "Pion": "lib/",
+            "Controller": "example/"
+            "Module": "example/"
         }
     }
 }

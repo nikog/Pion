@@ -22,8 +22,11 @@ class Pion
 
 		$this->args = $args;
 
+		// By default, look for Controllers from Controller/ namespace
 		$this->controllerDir = 'Controller';
 
+		// By default, look for templates/index.php for page template
+		$this->defaultTemplate = 'index';
 		$this->tplDefaults = array(
 			'name' => $this->defaultTemplate,
 			'ext' => 'php',
@@ -52,7 +55,7 @@ class Pion
 		}
 
 		if(!is_array($uris)) {
-			throw new \InvalidArgumentException('Given URIs must be an array.');
+			throw new \InvalidArgumentException('Given URIs must be in array.');
 		}
 
 		$this->request['method'] = strtolower($_SERVER['REQUEST_METHOD']);
@@ -158,11 +161,11 @@ class Pion
 		}
 
 		// Search from default controller directory if not defined
-		$controllerDir = isset($controllerDir) ?
-			$controllerDir : $this->controllerDir;
+		if(!isset($controllerDir)) {
+			$controllerDir = $this->controllerDir;
+		}
 
-
-		$class = "\\Pion\\{$controllerDir}\\{$action}\\{$action}";
+		$class = "\\{$controllerDir}\\{$action}\\{$action}";
 
 		// Action is a defined controller
 		if (class_exists($class, true)) {
@@ -173,6 +176,8 @@ class Pion
 			$httpMethod = "_{$this->request['method']}";
 
 			if ($controllerMethod) {
+				// Method to call was given as argument
+
 				if(method_exists($controller, $controllerMethod)) {
 					$controllerData = $controller->$controllerMethod();
 				} else {
@@ -181,6 +186,7 @@ class Pion
 						"method {$controllerMethod}."
 					);
 				}
+
 			} elseif (method_exists($controller, $crudMethod)) {
 				$controllerData = $controller->$crudMethod();
 			} elseif (method_exists($controller, $httpMethod)) {
@@ -267,12 +273,10 @@ class Pion
 				}
 				break;
 			case 'post':
-				if(isset($_POST['_METHOD'])) {
-					if($_POST['_METHOD'] == 'delete') {
-						$method = '_delete';
-					} else if($_POST['_METHOD'] == 'put') {
-						$method = '_update';
-					}
+				if($this->post('_METHOD') == 'delete') {
+					$method = '_delete';
+				} elseif($this->post('_METHOD') == 'put') {
+					$method = '_update';
 				} else {
 					$method = '_create';
 				}
@@ -400,6 +404,21 @@ class Pion
 				$this->request['accept'][$type] = $content_types[$type];
 			}
 		}
+	}
+
+	public function get($name, $default = null) 
+	{
+		if (isset($_GET[$name])) {
+			return $_GET[$name];
+		} 
+		return $default;
+	}
+	public function post($name, $default = null) 
+	{
+		if (isset($_POST[$name])) {
+			return $_POST[$name];
+		} 
+		return $default;
 	}
 }
 class FileNotFoundException extends \LogicException {}

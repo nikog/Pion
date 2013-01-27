@@ -5,7 +5,7 @@
 *	Response will be sent automaticly at the end of run() if
 *	no response is sent yet.
 */
-namespace Pion\Controller\Product;
+namespace Controller\Product;
 
 use \Pion\Utility;
 

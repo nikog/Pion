@@ -9,7 +9,7 @@ $app = new Pion();
 $getUris = array(
 	// Matches "demo/one(/two)(/3)"
 	"/demo/(?P<first>\w+)(?:/(?P<second>\w+))?(?:/(?P<third>\d+))?" =>
-	function() use ($app) {
+	function() {
 		echo '<pre>';
 		print_r($this->args);
 		echo '</pre>';
@@ -17,10 +17,10 @@ $getUris = array(
 	"/product(?:/page/(?P<page>\d+))?" => "Product",
 	"/product(?:/(?P<id>\d+))?" => "Product",
 	"/home" => 'Home',
-	"/test" => function() use ($app) {
-		echo $app->render('template', null, 'html', 'templates');
+	"/test" => function() {
+		echo $this->render('template', null, 'html', 'templates');
 	},
-	"/json" => function() use ($app) {
+	"/json" => function() {
 		$json = json_encode(array('hello' => 'world'));
 
 		return array(
@@ -49,4 +49,4 @@ $uris = array(
 	);
 
 $app->setTemplateDefaults(array('name' => 'index'))
-	->run($uris, $filters);
+	->run($uris);
