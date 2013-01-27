@@ -4,12 +4,13 @@ namespace Pion;
 class Pion
 {
 	protected $baseUri;
-	protected $defaultTemplate;
+	protected $baseView;
+	protected $applicationDirectory;
 	protected $args;
 	protected $request;
 	protected static $responseSent;
 	private $controllerDir;
-	private $tplDefaults;
+	private $data = array();
 
 	public function __construct($baseUri = '/', $args = array())
 	{
@@ -25,13 +26,8 @@ class Pion
 		// By default, look for Controllers from Controller/ namespace
 		$this->controllerDir = 'Controller';
 
-		// By default, look for templates/index.php for page template
-		$this->defaultTemplate = 'index';
-		$this->tplDefaults = array(
-			'name' => $this->defaultTemplate,
-			'ext' => 'php',
-			'dir' => 'templates'
-		);
+		// By default, look for application/views/index.php
+		$this->baseView = 'index';
 
 		if (!in_array('mod_rewrite', apache_get_modules())) {
 			$this->baseUri .= 'index.php';
@@ -65,45 +61,25 @@ class Pion
 				"No URIs assigned to HTTP method {$this->request['method']}.");
 		}
 
-		if(is_array($uris[key($uris)])) {
-			$uris = $uris[$this->request['method']];
-		}
+		$uris = $uris[$this->request['method']];
 
-		$controllerData = $this->route($uris);
-
-		// Template defaults
-		$templateData = $this->tplDefaults;
-		if($controllerData && array_key_exists('template', $controllerData)) {
-			// Merge and overwrite custom values to defaults
-			$templateData = array_merge(
-				$templateData,
-				$controllerData['template']
-			);
-		}
-
-		if(!$templateData['name']) {
-			$controllerData = $controllerData['content'];
-		}
+		// Route query and fetch response
+		$response = $this->route($uris);
 
 		// Route was not found; handle 404
-		if ($controllerData === false) {
+		if ($response === false) {
 			try {
-				$controllerData = $this->execute($uris['404']);
+				$response = $this->execute($uris['404']);
 			} catch (InvalidActionException $e) {
-				// No action for 404 was found, use default 404 handling
+				// No action for 404 was found, send plain 404
 				header("HTTP/1.1 404 Not Found");
-				// Clear templateData
-				$templateData = array_map(function() {}, $templateData);
+
+				return;
 			}
 		}
 
 		// Output
-		$this->respond(
-			$controllerData,
-			$templateData['name'],
-			$templateData['ext'],
-			$templateData['dir']
-		);
+		$this->respond($response);
 	}
 
 	/**
@@ -179,7 +155,7 @@ class Pion
 				// Method to call was given as argument
 
 				if(method_exists($controller, $controllerMethod)) {
-					$controllerData = $controller->$controllerMethod();
+					$response = $controller->$controllerMethod();
 				} else {
 					throw new \BadMethodCallException(
 						"Class '{$class}' does not support ".
@@ -188,9 +164,11 @@ class Pion
 				}
 
 			} elseif (method_exists($controller, $crudMethod)) {
-				$controllerData = $controller->$crudMethod();
+				$response = $controller->$crudMethod();
+
 			} elseif (method_exists($controller, $httpMethod)) {
-				$controllerData = $controller->$httpMethod();
+				$response = $controller->$httpMethod();
+
 			} else {
 				throw new \BadMethodCallException(
 					"Class '{$class}' does not support ".
@@ -198,57 +176,30 @@ class Pion
 				);
 			}
 
-			return $controllerData;
+			return $response;
 		}
 		throw new InvalidActionException("Executed action '{$action}' ".
 			"is not a defined closure or controller.");
 	}
 
-
-
-	/**
-	*	Check if any kind of response has been sent
-	*	whether it's sent headers, respond() already called
-	*	or 'global' output buffer having content.
-	*/
-	protected function isResponseSent()
-	{
-		if (headers_sent() || static::$responseSent || (ob_get_contents())) {
-			return true;
-		}
-		return false;
-	}
-
-
-
 	/**
 	*	Send response to client
-	*	@param string $template Name of the template file
+	*	@param string $response Array containing baseView and content
 	*/
-	public function respond(
-		$controllerData,
-		$template = null,
-		$extension = null,
-		$dirName = null
-	) {
-		if (!$this->isResponseSent()) {
-			ob_start();
-			if ($template) {
-				echo $this->render(
-					$template,
-					$controllerData,
-					$extension,
-					$dirName
-				);
-			} else {
-				echo $controllerData;
-			}
-			ob_end_flush();
-
-			static::$responseSent = true;
+	private function respond($response)
+	{
+		ob_start();
+		if ($response['baseView']) {
+			echo $this->view($response['baseView'], $response['content']);
+		} else {
+			echo $response;
 		}
+		ob_end_flush();
+	}
 
-		//throw new ApplicationException("Response has already been sent.");
+	public static function response() 
+	{
+		return array('baseView' => $this->baseView, 'content' => $this->data;
 	}
 
 	protected function redirect($path)
@@ -313,9 +264,9 @@ class Pion
 		return $this;
 	}
 
-	public function setTemplateDefaults($defaults)
+	public function setBaseView($baseView)
 	{
-		$this->tplDefaults = array_merge($this->tplDefaults, $defaults);
+		$this->baseView = $baseView;
 		return $this;
 	}
 
@@ -332,7 +283,7 @@ class Pion
 	*	Otherwise "Accept"-header will be used
 	*	@return string
 	*/
-	public function render($view, $data = array(), $ext = null, $dir = 'views')
+	public function view($view, $data = array(), $dir = 'views')
 	{
 		// Get directory of the class that called this method
 		$reflector = new \ReflectionClass(get_class($this));
@@ -340,27 +291,11 @@ class Pion
 
 		$classPath = "{$classDir}/{$dir}/{$view}";
 
-		if ($ext === null) {
-			// Get filetype from Accept header
-			$this->setContentTypes();
-
-			foreach ($this->request['accept'] as $header => $ext) {
-				if (is_file("{$classPath}.{$ext}.php")) {
-					$includePath = "{$classPath}.{$ext}.php";
-					break;
-				} elseif (is_file("{$classPath}.{$ext}")) {
-					$includePath = "{$classPath}.{$ext}";
-					break;
-				}
-			}
-		} else {
-			if (is_file("{$classPath}.{$ext}.php")) {
-				$includePath = "{$classPath}.{$ext}.php";
-			} else {
-				$includePath = "{$classPath}.{$ext}";
-			}
+		if (is_file("{$classPath}.php")) {
+			$includePath = "{$classPath}.php";
+		} elseif (is_file("{$this->applicationDirectory}/{$dir}/{$view}.php")) {
+			$includePath = "{$this->applicationDirectory}/{$dir}/{$view}.php";
 		}
-
 
 		if (isset($includePath)) {
 			// Personal preference
@@ -372,7 +307,7 @@ class Pion
 
 			return ob_get_clean();
 		}
-		throw new FileNotFoundException("File '{$path}.{$ext}' was not found");
+		throw new FileNotFoundException("File '{$path}.php' was not found");
 	}
 
 	/**
@@ -419,6 +354,16 @@ class Pion
 			return $_POST[$name];
 		} 
 		return $default;
+	}
+
+	public function __get($key, $default = null) {
+		if(isset($this->data[$key])) {
+			return $this->data[$key];
+		}
+		return $default;
+	}
+	public function __set($key, $value) {
+		$this->data[$key] = $value;
 	}
 }
 class FileNotFoundException extends \LogicException {}

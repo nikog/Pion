@@ -2,8 +2,8 @@
     "autoload": {
         "psr-0": {
             "Pion": "lib/",
-            "Controller": "example/"
-            "Module": "example/"
+            "Controller": "example/controllers"
+            "Module": "example/controllers"
         }
     }
 }

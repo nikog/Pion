@@ -17,9 +17,6 @@ $getUris = array(
 	"/product(?:/page/(?P<page>\d+))?" => "Product",
 	"/product(?:/(?P<id>\d+))?" => "Product",
 	"/home" => 'Home',
-	"/test" => function() {
-		echo $this->render('template', null, 'html', 'templates');
-	},
 	"/json" => function() {
 		$json = json_encode(array('hello' => 'world'));
 
@@ -27,10 +24,9 @@ $getUris = array(
 			// Set template to none
 			'template' => array('name' => null),
 			'content' => $json);
-
-		//$app->respond(json_encode(array('hello' => 'world')));
 	},
 	"/errortest" => 'doesntexist',
+	"404" => 'Error404',
 	);
 
 $postUris = array(
