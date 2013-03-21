@@ -3,36 +3,44 @@ namespace Pion;
 
 class Pion
 {
-	protected $baseUri;
-	protected $baseView;
-	protected $applicationDirectory;
+	// Base of the URL after domain
+	private static $baseUri;
+
+	// Default base view/template
+	private static $template;
+
+	// Stuff from request ie. method, headers etc.
+	private static $request;
+
+	private $routes;
+
+	// Arguments parsed from URL
 	protected $args;
-	protected $request;
-	protected static $responseSent;
-	private $controllerDir;
+
+	// Data stored by magic setters. Respond() will use these contents.
 	private $data = array();
 
-	public function __construct($baseUri = '/', $args = array())
+	public function __construct(
+		$args = null, 
+		$baseUri = null,
+		$template = 'index')
 	{
-		// Try to quess base URI
-		$this->baseUri = str_replace(
-			$_SERVER['DOCUMENT_ROOT'],
-			'',
-			dirname($_SERVER['SCRIPT_FILENAME'])
-		);
+		if($baseUri) {
+			$this->baseUri = $baseUri;
+		}
 
-		$this->args = $args;
-
-		// By default, look for Controllers from Controller/ namespace
-		$this->controllerDir = 'Controller';
+		if($args) {
+			$this->args = $args;
+		}
 
 		// By default, look for application/views/index.php
-		$this->baseView = 'index';
+		$this->template = 'index';
 
-		if (!in_array('mod_rewrite', apache_get_modules())) {
-			$this->baseUri .= 'index.php';
-		}
+		return $this;
 	}
+
+
+
 
 	/**
 	*	Application main logic
@@ -44,64 +52,71 @@ class Pion
 	*	all four HTTP methods as keys with arrays containing
 	*	URIs assigned to those methods as values.
 	*/
-	public function run($uris = null)
+	public function run()
 	{
-		if (is_null($uris)) {
-			throw new \InvalidArgumentException('No URIs has been defined.');
-		}
+		if (!isset($this->baseUri)) {
+			// Try to quess base URI
+			$this->baseUri = str_replace(
+				$_SERVER['DOCUMENT_ROOT'],
+				'',
+				dirname($_SERVER['SCRIPT_FILENAME'])
+			);
 
-		if(!is_array($uris)) {
-			throw new \InvalidArgumentException('Given URIs must be in array.');
+			if (!in_array('mod_rewrite', apache_get_modules())) {
+				$this->baseUri .= 'index.php';
+			}
 		}
 
 		$this->request['method'] = strtolower($_SERVER['REQUEST_METHOD']);
+		$this->request['uri'] = strtok($_SERVER['REQUEST_URI'], '?');
 
-		if (!isset($uris[$this->request['method']])) {
+		if (!isset($routes[$this->request['method']])) {
 			throw new \InvalidArgumentException(
-				"No URIs assigned to HTTP method {$this->request['method']}.");
+				"No routes assigned to HTTP method {$this->request['method']}.");
 		}
 
-		$uris = $uris[$this->request['method']];
-
-		// Route query and fetch response
-		$response = $this->route($uris);
+		// Fetch action assigned to route
+		$action = $this->route();
 
 		// Route was not found; handle 404
-		if ($response === false) {
+		if ($action === false) {
 			try {
-				$response = $this->execute($uris['404']);
+				$response = $this->execute($routes['error']['404']);
 			} catch (InvalidActionException $e) {
-				// No action for 404 was found, send plain 404
-				header("HTTP/1.1 404 Not Found");
-
+				header("HTTP/1.0 404 Not Found");
 				return;
 			}
 		}
 
-		// Output
-		$this->respond($response);
+		$response = $this->execute($action);
 	}
 
-	/**
-	*	@param array $uris Contains the defined uris for
-	*	currently used http method
-	*	@return mixed Returns whatever the action returns. Without match
-	*	returns false.
-	*/
-	private function route($uris)
-	{
-		$this->request['uri'] = strtok($_SERVER['REQUEST_URI'], '?');
 
-		foreach ($uris as $pattern => $action) {
+
+
+	/**
+	*	@param string $uri Optional parameter for manual uri
+	*	@return mixed Returns action assigned to the route, false otherwise.
+	*/
+	private function route($uri = null)
+	{
+		if(!is_null($uri)) {
+			$this->request['uri'] = $uri;
+		}
+
+		$routes = $this->routes[$this->request['method']];
+
+		foreach ($routes as $pattern => $action) {
 			$pattern = "@^" . $this->baseUri . $pattern . "/?$@";
 
 			if (preg_match($pattern, $this->request['uri'], $matches)) {
-				$this->setArgs($matches);
-				return $this->execute($action);
+				$this->$args = $matches;
+				return $action;
 			}
 		}
 		return false;
 	}
+
 
 
 
@@ -125,9 +140,9 @@ class Pion
 	protected function execute(
 		$action,
 		$controllerMethod = null,
-		$controllerDir = null
-	) {
-		// Action is a closure
+		$controllerDir = null)
+	{
+		// Action is a function
 		if (is_callable($action)) {
 			if (method_exists($action, 'bindTo')) {
 				$action->bindTo($this);
@@ -141,17 +156,21 @@ class Pion
 			$controllerDir = $this->controllerDir;
 		}
 
-		$class = "\\{$controllerDir}\\{$action}\\{$action}";
+		$action = preg_replace('/', '\\', $action);
+		$class = "\\{$controllerDir}\\{$action}";
 
 		// Action is a defined controller
 		if (class_exists($class, true)) {
-			$controller = new $class($this->baseUri, $this->args);
+			$controller = new $class($this->args, $this->baseUri);
 
 			// Attempt to quess method according to rails CRUD methods
 			$crudMethod = $this->getCrudMethod($this->request['method']);
 			$httpMethod = "_{$this->request['method']}";
 
-			if ($controllerMethod) {
+			// Check which method is available in order of 
+			// given argument, rails crud method and httpmethod.
+
+			if ($controllerMethod || !is_null(explode(':', $action)[1])) {
 				// Method to call was given as argument
 
 				if(method_exists($controller, $controllerMethod)) {
@@ -182,99 +201,8 @@ class Pion
 			"is not a defined closure or controller.");
 	}
 
-	/**
-	*	Send response to client
-	*	@param string $response Array containing baseView and content
-	*/
-	private function respond($response)
-	{
-		ob_start();
-		if ($response['baseView']) {
-			echo $this->view($response['baseView'], $response['content']);
-		} else {
-			echo $response;
-		}
-		ob_end_flush();
-	}
 
-	public static function response() 
-	{
-		return array('baseView' => $this->baseView, 'content' => $this->data;
-	}
 
-	protected function redirect($path)
-	{
-		header("Location: {$this->baseUri}{$path}", true, 303);
-		exit;
-	}
-
-	/**
-	*	Attempts to quess and assign a Rails CRUD method:
-	*	_show, _index, _delete, _update or _create
-	*	@param string $method HTTP method used by client
-	*/
-	protected function getCrudMethod($method)
-	{
-		switch ($method) {
-			case 'get':
-				if(isset($this->args['id'])) {
-					$method = '_show';
-				} else {
-					$method = '_index';
-				}
-				break;
-			case 'post':
-				if($this->post('_METHOD') == 'delete') {
-					$method = '_delete';
-				} elseif($this->post('_METHOD') == 'put') {
-					$method = '_update';
-				} else {
-					$method = '_create';
-				}
-				break;
-			case 'put':
-				$method = '_update';
-				break;
-			case 'delete':
-				$method = '_delete';
-				break;
-		}
-
-		return $method;
-	}
-
-	/**
-	*	Set arguments parsed from request URI
-	*	@param array $args Parsed arguments
-	*/
-	public function setArgs($args)
-	{
-		$this->args = $args;
-		return $this;
-	}
-
-	/**
-	*	Set URI base/directory so you don't have to
-	*	write it in each URI.
-	*	@param string $base URI base directory
-	*/
-	public function setBaseUri($base)
-	{
-		$this->baseUri = $base;
-		return $this;
-	}
-
-	public function setBaseView($baseView)
-	{
-		$this->baseView = $baseView;
-		return $this;
-	}
-
-	public function setDefaultControllerDir($dir)
-	{
-		$this->controllerDir = $dir;
-		return $this;
-	}
 
 	/**
 	*	Fetch view from {current_file_location}/views/{view}.{content_type}.php
@@ -293,8 +221,8 @@ class Pion
 
 		if (is_file("{$classPath}.php")) {
 			$includePath = "{$classPath}.php";
-		} elseif (is_file("{$this->applicationDirectory}/{$dir}/{$view}.php")) {
-			$includePath = "{$this->applicationDirectory}/{$dir}/{$view}.php";
+		} elseif (is_file("{$dir}/{$view}.php")) {
+			$includePath = "{$dir}/{$view}.php";
 		}
 
 		if (isset($includePath)) {
@@ -308,6 +236,96 @@ class Pion
 			return ob_get_clean();
 		}
 		throw new FileNotFoundException("File '{$path}.php' was not found");
+	}
+
+
+
+
+	protected function redirect($path)
+	{
+		header("Location: {$this->baseUri}{$path}", true, 303);
+		exit;
+	}
+
+
+
+
+	public static function response() 
+	{
+		return array('baseView' => $this->baseView, 'content' => $this->data);
+	}
+
+
+
+
+	/**
+	*	Send response to client
+	*	@param string $response Array containing baseView and content
+	*/
+	private function respond($response)
+	{
+		ob_start();
+		if ($response['baseView']) {
+			echo $this->view($response['baseView'], $response['content']);
+		} else {
+			echo $response;
+		}
+		ob_end_flush();
+	}
+
+	
+
+	
+	/**
+	*	Attempts to quess and assign a Rails CRUD method:
+	*	_show, _index, _delete, _update or _create
+	*	@param string $method HTTP method used by client
+	*/
+	protected function getCrudMethod($method)
+	{
+		switch ($method) {
+			case 'get':
+				if (isset($this->args['id'])) {
+					$method = '_show';
+				} else {
+					$method = '_index';
+				}
+				break;
+			case 'post':
+				if ($this->post('_METHOD') == 'delete') {
+					$method = '_delete';
+				} elseif ($this->post('_METHOD') == 'put') {
+					$method = '_update';
+				} else {
+					$method = '_create';
+				}
+				break;
+			case 'put':
+				$method = '_update';
+				break;
+			case 'delete':
+				$method = '_delete';
+				break;
+		}
+
+		return $method;
+	}
+
+	/**
+	*	Set URI base/directory so you don't have to
+	*	write it in each URI.
+	*	@param string $base URI base directory
+	*/
+	public function setBaseUri($base)
+	{
+		$this->baseUri = $base;
+		return $this;
+	}
+
+	public function setBaseView($baseView)
+	{
+		$this->baseView = $baseView;
+		return $this;
 	}
 
 	/**
@@ -341,29 +359,39 @@ class Pion
 		}
 	}
 
-	public function get($name, $default = null) 
+	public function getGet($name, $default = null) 
 	{
 		if (isset($_GET[$name])) {
 			return $_GET[$name];
 		} 
 		return $default;
 	}
-	public function post($name, $default = null) 
+	public function getPost($name, $default = null) 
 	{
 		if (isset($_POST[$name])) {
 			return $_POST[$name];
 		} 
 		return $default;
 	}
-
-	public function __get($key, $default = null) {
+	public function __get($key, $default = null)
+	{
 		if(isset($this->data[$key])) {
 			return $this->data[$key];
 		}
 		return $default;
 	}
-	public function __set($key, $value) {
+	public function __set($key, $value)
+	{
 		$this->data[$key] = $value;
+	}
+
+	public function __call($method, $args)
+	{
+		if (!in_array($method, ['get', 'post', 'put', 'delete', 'error'])) {
+			return;
+		}
+		$this->routes[$method][$args[0]] = $args[1];
+		return $this;
 	}
 }
 class FileNotFoundException extends \LogicException {}

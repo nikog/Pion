@@ -1,5 +1,5 @@
 <?php
-namespace Controller\Home;
+namespace \Pion\Controller\Home;
 
 class Home extends \Pion\Pion {
     function _get() {
