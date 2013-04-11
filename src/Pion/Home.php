@@ -3,13 +3,12 @@ namespace \Pion\Controller\Home;
 
 class Home extends \Pion\Pion {
     function _get() {
-        $this->args['id'] = 13;
-
-        $news = $this->execute('News', 'latest', 'Module');
+        $news = $this->execute('News:latest');
 
         // Optional, index is already default
-        $this->setBaseView('index');
+        $this->setTemplate('index');
 
+        // Variable names are up to user
         $this->title = 'Home';
         $this->content = $this->view('home', array('news' => $news));
 

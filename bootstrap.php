@@ -5,14 +5,13 @@ use Pion\Pion;
 
 $app = new Pion():
 
-// Matches "demo/one(/two)(/3)"
 $app->get("/demo/(?P<first>\w+)(?:/(?P<second>\w+))?(?:/(?P<third>\d+))?", 
         function() {
             echo '<pre>';
             print_r($this->args);
             echo '</pre>';
         })
-    ->get("/product(?:/page/(?P<page>\d+))?", "Product/Product")
+    ->match("/product(?:/page/(?P<page>\d+))?", "Product/Product")
     ->get("/product(?:/(?P<id>\d+))?", "Product/Product:_index")
     ->get("/errortest", "doesntexist")
     // This would require PHP >= 5.4 by using bind()
@@ -35,7 +34,5 @@ $app->get("/demo/(?P<first>\w+)(?:/(?P<second>\w+))?(?:/(?P<third>\d+))?",
             var_dump($_POST);
             echo '</pre>';
         }));
-
-$app->setTemplateDefaults(array('name' => 'index'));
 
 return $app;

@@ -21,9 +21,9 @@ class Pion
 	private $data = array();
 
 	public function __construct(
+		$template = 'index',
 		$args = null, 
-		$baseUri = null,
-		$template = 'index')
+		$baseUri = null)
 	{
 		if($baseUri) {
 			$this->baseUri = $baseUri;
@@ -54,20 +54,9 @@ class Pion
 	*/
 	public function run()
 	{
-		if (!isset($this->baseUri)) {
-			// Try to quess base URI
-			$this->baseUri = str_replace(
-				$_SERVER['DOCUMENT_ROOT'],
-				'',
-				dirname($_SERVER['SCRIPT_FILENAME'])
-			);
-
-			if (!in_array('mod_rewrite', apache_get_modules())) {
-				$this->baseUri .= 'index.php';
-			}
-		}
-
 		$this->request['method'] = strtolower($_SERVER['REQUEST_METHOD']);
+
+		// strtok to strip parameters
 		$this->request['uri'] = strtok($_SERVER['REQUEST_URI'], '?');
 
 		if (!isset($routes[$this->request['method']])) {
@@ -83,19 +72,24 @@ class Pion
 			try {
 				$response = $this->execute($routes['error']['404']);
 			} catch (InvalidActionException $e) {
+				// Default 404 handling
 				header("HTTP/1.0 404 Not Found");
 				return;
 			}
 		}
 
 		$response = $this->execute($action);
+
+		if($response) {
+			$this->respond($response);
+		}
 	}
 
 
 
 
 	/**
-	*	@param string $uri Optional parameter for manual uri
+	*	@param string $uri Optional parameter for manual request uri
 	*	@return mixed Returns action assigned to the route, false otherwise.
 	*/
 	private function route($uri = null)
@@ -105,6 +99,7 @@ class Pion
 		}
 
 		$routes = $this->routes[$this->request['method']];
+		$routes = array_merge($routes, $this->routes['match']);
 
 		foreach ($routes as $pattern => $action) {
 			$pattern = "@^" . $this->baseUri . $pattern . "/?$@";
@@ -132,15 +127,9 @@ class Pion
 	*	PSR-0 should be used on class path and namespace.
 	*
 	*	@param mixed $action Closure or name of controller class
-	*	@param string $controllerMethod Call this method instead of
-	*		guessing it by method and uri arguments.
-	*	@param string $controllerDir Directory of the controller
 	*	@return mixed Returns the return value of the action.
 	*/
-	protected function execute(
-		$action,
-		$controllerMethod = null,
-		$controllerDir = null)
+	protected function execute($action)
 	{
 		// Action is a function
 		if (is_callable($action)) {
@@ -151,27 +140,23 @@ class Pion
 			return call_user_func_array($action, $this->args);
 		}
 
-		// Search from default controller directory if not defined
-		if(!isset($controllerDir)) {
-			$controllerDir = $this->controllerDir;
-		}
-
+		// Action can be in shape of 'directory/class'
 		$action = preg_replace('/', '\\', $action);
 		$class = "\\{$controllerDir}\\{$action}";
 
 		// Action is a defined controller
 		if (class_exists($class, true)) {
-			$controller = new $class($this->args, $this->baseUri);
+			$controller = new $class($this->template, $this->args, $this->baseUri);
 
-			// Attempt to quess method according to rails CRUD methods
 			$crudMethod = $this->getCrudMethod($this->request['method']);
 			$httpMethod = "_{$this->request['method']}";
 
 			// Check which method is available in order of 
 			// given argument, rails crud method and httpmethod.
 
-			if ($controllerMethod || !is_null(explode(':', $action)[1])) {
-				// Method to call was given as argument
+			// Action can be in form of 'class:method'
+			if (!is_null(explode(':', $action)[1])) {
+				$controllerMethod = explode(':', $action)[1];
 
 				if(method_exists($controller, $controllerMethod)) {
 					$response = $controller->$controllerMethod();
@@ -211,62 +196,33 @@ class Pion
 	*	Otherwise "Accept"-header will be used
 	*	@return string
 	*/
-	public function view($view, $data = array(), $dir = 'views')
+	public function view($view, $data = array())
 	{
-		// Get directory of the class that called this method
-		$reflector = new \ReflectionClass(get_class($this));
-		$classDir = dirname($reflector->getFileName());
+		$viewPath = "{$dir}/{$view}.php";
 
-		$classPath = "{$classDir}/{$dir}/{$view}";
-
-		if (is_file("{$classPath}.php")) {
-			$includePath = "{$classPath}.php";
-		} elseif (is_file("{$dir}/{$view}.php")) {
-			$includePath = "{$dir}/{$view}.php";
-		}
-
-		if (isset($includePath)) {
-			// Personal preference
-			$data = (object) $data;
-
+		if (is_file($viewPath) {
 			ob_start();
-
-			include $includePath;
-
+			include $viewPath;
 			return ob_get_clean();
 		}
-		throw new FileNotFoundException("File '{$path}.php' was not found");
+
+		throw new FileNotFoundException("File '{$view}.php' was not found");
 	}
-
-
-
-
-	protected function redirect($path)
-	{
-		header("Location: {$this->baseUri}{$path}", true, 303);
-		exit;
-	}
-
-
-
 
 	public static function response() 
 	{
-		return array('baseView' => $this->baseView, 'content' => $this->data);
+		return array('template' => $this->template, 'content' => $this->data);
 	}
-
-
-
 
 	/**
 	*	Send response to client
-	*	@param string $response Array containing baseView and content
+	*	@param string $response Array containing template and content
 	*/
 	private function respond($response)
 	{
 		ob_start();
-		if ($response['baseView']) {
-			echo $this->view($response['baseView'], $response['content']);
+		if ($response['template']) {
+			echo $this->view($response['template'], $response['content']);
 		} else {
 			echo $response;
 		}
@@ -322,9 +278,9 @@ class Pion
 		return $this;
 	}
 
-	public function setBaseView($baseView)
+	public function setTemplate($template)
 	{
-		$this->baseView = $baseView;
+		$this->template = $template;
 		return $this;
 	}
 
@@ -359,20 +315,7 @@ class Pion
 		}
 	}
 
-	public function getGet($name, $default = null) 
-	{
-		if (isset($_GET[$name])) {
-			return $_GET[$name];
-		} 
-		return $default;
-	}
-	public function getPost($name, $default = null) 
-	{
-		if (isset($_POST[$name])) {
-			return $_POST[$name];
-		} 
-		return $default;
-	}
+	// Getter for view values
 	public function __get($key, $default = null)
 	{
 		if(isset($this->data[$key])) {
@@ -380,14 +323,20 @@ class Pion
 		}
 		return $default;
 	}
+
+	// Setter for view values
 	public function __set($key, $value)
 	{
 		$this->data[$key] = $value;
 	}
 
+	// Nicer method names to add urls
 	public function __call($method, $args)
 	{
-		if (!in_array($method, ['get', 'post', 'put', 'delete', 'error'])) {
+		if (!in_array(
+				$method, 
+				['get', 'post', 'put', 'delete', 'error', 'match']
+				)) {
 			return;
 		}
 		$this->routes[$method][$args[0]] = $args[1];
